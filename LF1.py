@@ -160,7 +160,7 @@ def validateDiningIntent(slots):
     #         return build_validation_result(False, 'date_done', None)
     
     if email:
-        sqs = boto3.resource('sqs',region_name='us-east-1', aws_access_key_id='AKIAWAVSKGK2LZP7PPNS', aws_secret_access_key='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')
+        sqs = boto3.resource('sqs',region_name='us-east-1', aws_access_key_id='', aws_secret_access_key='')
         msg = {"cuisine": cuisine, "email": email}
         que = sqs.get_queue_by_name(QueueName='RestaurantSuggestionRequest')
         response = que.send_message(MessageBody=json.dumps(msg))
