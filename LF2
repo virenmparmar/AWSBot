@@ -163,7 +163,7 @@ def searchResults(cusine):
 
 def lambda_handler(event, context):
     try:
-        sqs = boto3.resource('sqs',region_name='us-east-1', aws_access_key_id='AKIAWAVSKGK2LZP7PPNS', aws_secret_access_key='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')
+        sqs = boto3.resource('sqs',region_name='us-east-1', aws_access_key_id='', aws_secret_access_key='')
         client1 = boto3.client('sqs')
         queues = client1.list_queues(QueueNamePrefix='RestaurantSuggestionRequest')
         queue_url = queues['QueueUrls'][0]
