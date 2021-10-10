@@ -1,0 +1,206 @@
+import os
+import boto3
+from botocore.exceptions import ClientError
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import random
+from requests_aws4auth import AWS4Auth
+from opensearchpy import OpenSearch, RequestsHttpConnection
+import json
+import requests
+
+awsRegion = 'us-east-1'
+accessID=''
+secretKey = ''
+dbObject = boto3.resource('dynamodb',region_name=awsRegion, aws_access_key_id=accessID, aws_secret_access_key=secretKey)
+dbtable = dbObject.Table('restaurent_data')
+
+def getDetailsfromDynamo(restid, dbtable):
+    try:
+        response = dbtable.get_item(Key={'id': restid})
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+    else:
+        return response['Item']
+    
+
+
+def sendEmail(email, cusine, msg):
+    # Replace sender@example.com with your "From" address.
+    # This address must be verified with Amazon SES.
+    SENDER = "Viren Parmar <vmp2018@nyu.edu>"
+
+    # Replace recipient@example.com with a "To" address. If your account 
+    # is still in the sandbox, this address must be verified.
+    RECIPIENT = email
+
+    # Specify a configuration set. If you do not want to use a configuration
+    # set, comment the following variable, and the 
+    # ConfigurationSetName=CONFIGURATION_SET argument below.
+    # CONFIGURATION_SET = "ConfigSet"
+
+    # If necessary, replace us-west-2 with the AWS Region you're using for Amazon SES.
+    AWS_REGION = "us-east-1"
+
+    # The subject line for the email.
+    SUBJECT = "Restaurant Suggestions for you"
+
+    # The full path to the file that will be attached to the email.
+    #ATTACHMENT = "path/to/customers-to-contact.xlsx"
+    
+    address = ''
+    for tmp in msg['address']:
+        address = address + ' ' + tmp
+
+    # The email body for recipients with non-HTML email clients.
+    BODY_TEXT = ' ' + msg['restaurent_name'] + ' is the restaurant i found ' + tmp + ' ' + 'it serves great ' + cusine + ' food.'
+    
+
+    # The HTML body of the email.
+    BODY_HTML = """\
+    <html>
+    <head></head>
+    <body>
+    <h1>Hello!</h1>
+    <p></p>
+    </body>
+    </html>
+    """
+
+    # The character encoding for the email.
+    CHARSET = "utf-8"
+
+    # Create a new SES resource and specify a region.
+    client = boto3.client('ses',region_name=AWS_REGION)
+
+    # Create a multipart/mixed parent container.
+    msg = MIMEMultipart('mixed')
+    # Add subject, from and to lines.
+    msg['Subject'] = SUBJECT 
+    msg['From'] = SENDER 
+    msg['To'] = RECIPIENT
+    
+    
+
+    # Create a multipart/alternative child container.
+    msg_body = MIMEMultipart('alternative')
+
+    # Encode the text and HTML content and set the character encoding. This step is
+    # necessary if you're sending a message with characters outside the ASCII range.
+    textpart = MIMEText(BODY_TEXT.encode(CHARSET), 'plain', CHARSET)
+    htmlpart = MIMEText(BODY_HTML.encode(CHARSET), 'html', CHARSET)
+
+    # Add the text and HTML parts to the child container.
+    msg_body.attach(textpart)
+    msg_body.attach(htmlpart)
+
+    # Define the attachment part and encode it using MIMEApplication.
+    #att = MIMEApplication(open(ATTACHMENT, 'rb').read())
+
+    # Add a header to tell the email client to treat this part as an attachment,
+    # and to give the attachment a name.
+    #att.add_header('Content-Disposition','attachment',filename=os.path.basename(ATTACHMENT))
+
+    # Attach the multipart/alternative child container to the multipart/mixed
+    # parent container.
+    msg.attach(msg_body)
+    try:
+        #Provide the contents of the email.
+        response = client.send_raw_email(
+            Source=SENDER,
+            Destinations=[
+                RECIPIENT
+            ],
+            RawMessage={
+                'Data':msg.as_string(),
+            }
+        )
+    # Display an error if something goes wrong.	
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+    else:
+        print("Email sent! Message ID:"),
+        print(response['MessageId'])
+    return 1
+
+    # Add the attachment to the parent container.
+    #msg.attach(att)
+    #print(msg)
+    
+
+def searchResults(cusine):
+    openSearchEndpoint = 'https://search-yelp-rest-2utd3mznqqcro7hgrfeubpknny.us-east-1.es.amazonaws.com/' 
+    region = 'us-east-1'
+    accessID=''
+    secretKey = ''
+    service = 'es'
+    credentials = boto3.Session(region_name=region, aws_access_key_id=accessID, aws_secret_access_key=secretKey).get_credentials()
+    awsauth = AWS4Auth(accessID, secretKey, region, service, session_token=credentials.token)
+
+    search = OpenSearch(
+        hosts = openSearchEndpoint,
+        http_auth = awsauth,
+        use_ssl = True,
+        verify_certs = True,
+        connection_class = RequestsHttpConnection
+    )
+    query = {
+        'size': 10,
+        'query': {
+            'multi_match': {
+            'query': cusine,
+            'fields': ['cuisine']
+            }
+            }
+        }
+    response = search.search(
+        body = query,
+        index = 'restaurant'
+        )
+    
+    return response
+
+
+def lambda_handler(event, context):
+    try:
+        sqs = boto3.resource('sqs',region_name='us-east-1', aws_access_key_id='AKIAWAVSKGK2LZP7PPNS', aws_secret_access_key='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')
+        client1 = boto3.client('sqs')
+        queues = client1.list_queues(QueueNamePrefix='RestaurantSuggestionRequest')
+        queue_url = queues['QueueUrls'][0]
+
+        # get the response from the queue
+        response = client1.receive_message(
+            QueueUrl=queue_url,
+            AttributeNames=[
+                'All'
+            ],
+            MaxNumberOfMessages=10,
+            MessageAttributeNames=[
+                'All'
+            ],
+            VisibilityTimeout=30,
+            WaitTimeSeconds=0
+        )
+        
+        if len(response['Messages']) > 0:
+            for message in response['Messages']:
+                js = json.loads(message['Body'])
+                cuisine = js['cuisine']
+                email = js['email']
+               
+                results = searchResults(cuisine)
+               
+               
+                numofhits = results['hits']["total"]
+                num = random.randint(0,len(numofhits)-1)
+                tmpDict = numofhits[num]
+                ids = tmpDict['_source']['restaurentID']
+                
+                output  = getDetailsfromDynamo(ids, dbtable)
+                resp = sendEmail(email, cuisine, output)
+                client1.delete_message(QueueUrl=queue_url, ReceiptHandle=message['ReceiptHandle'])
+       
+    except ClientError as e:
+        print(e.response['Error']['Message'])
+
+    
